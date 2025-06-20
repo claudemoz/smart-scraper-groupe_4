@@ -1,0 +1,122 @@
+version: "3.8"
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: smart-scraper-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: paris_opendata
+      MYSQL_ROOT_HOST: "%"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./backend/db/create-database.sql:/docker-entrypoint-initdb.d/create-database.sql
+    ports:
+      - "3306:3306"
+    networks:
+      - smart-scraper-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      timeout: 20s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: smart-scraper-backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DB_HOST=db
+      - DB_NAME=paris_opendata
+      - DB_USER=root
+      - DB_PASSWORD=root
+      - SECRET_KEY=your-secret-key-here
+      - FLASK_ENV=production
+    ports:
+      - "5000:5000"
+    networks:
+      - smart-scraper-network
+    volumes:
+      - ./backend/data_collector.log:/app/data_collector.log
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Scheduler pour les tâches automatiques
+  scheduler:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.scheduler
+    container_name: smart-scraper-scheduler
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      - API_BASE_URL=http://backend:5000/api
+      - SCRAPE_FREQUENCY=daily  # hourly, daily, weekly
+      - SCRAPE_TIME=02:00       # Format HH:MM
+      - SCRAPE_DAY=monday       # Pour weekly: monday, tuesday, etc.
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=admin123
+    networks:
+      - smart-scraper-network
+    volumes:
+      - ./backend/scheduler.log:/app/scheduler.log
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "scheduler.py"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # Frontend 
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=/api
+    container_name: smart-scraper-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+    networks:
+      - smart-scraper-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: smart-scraper-phpmyadmin
+    restart: unless-stopped
+    depends_on:
+      - db
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+      MYSQL_ROOT_PASSWORD: root
+      PMA_ARBITRARY: 0
+    ports:
+      - "8080:80"
+    networks:
+      - smart-scraper-network
+
+volumes:
+  db_data:
+    driver: local
+
+networks:
+  smart-scraper-network:
+    driver: bridge 
