@@ -1,1 +1,1 @@
-Group 4: Claude et HInd
+Group 4: Claude et Hind
